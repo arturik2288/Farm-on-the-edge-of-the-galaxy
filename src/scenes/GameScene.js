@@ -64,15 +64,12 @@ export default class GameScene extends Phaser.Scene {
     this.collectedOre   = 0;
     this.collectedFood  = 0;
     this.collectedWater = 0;
-    this.isMining       = false;
-    this.miningElapsed  = 0;
-    this.miningDuration = 15000; // ms
 
     this.satiety        = 20;    // starts full
     this.satietyMax     = 20;
     this.satietyTimer   = 0;     // ms accumulator for 1-minute drain
 
-    this.tradeCounts    = { food: 0, water: 0 };
+    this.tradeCounts    = { food: 0, water: 0, bm_plants_ore: 0, bm_ore_food: 0, bm_food_water: 0, bm_water_plants: 0 };
     this.tradeResetTimer = 180000; // 3 minutes
 
     this.mapData = this.parseTmx(mapTmx);
@@ -82,6 +79,7 @@ export default class GameScene extends Phaser.Scene {
     this.createPlayer();
     this.createPlants();
     this.createUi();
+    this.createHarvestGauge();
     this.setupCamera();
     this.updateSatietyBar();
   }
@@ -95,11 +93,12 @@ export default class GameScene extends Phaser.Scene {
       this.handleMining(delta);
       this.housePrompt.setVisible(false);
     } else {
-      if (this.isMining) this.cancelMining();
+      // Cancel wheel if player left the mine mid-spin
+      if (this.harvestState === 'spinning' && this.harvestMode === 'ore') this.cancelMining();
       this.minePrompt.setVisible(false);
       if (!this.handleRocketInteraction()) {
         if (!this.handleHouseInteraction()) {
-          this.handlePlantCollection();
+          this.handlePlantCollection(delta);
         }
       } else {
         this.housePrompt.setVisible(false);
@@ -351,27 +350,11 @@ export default class GameScene extends Phaser.Scene {
     this.plantPrompt.setDepth(1000);
     this.plantPrompt.setVisible(false);
 
-    // Mining UI — shown above the player while mining
-    this.miningLabel = this.add.text(0, 0, '', {
+    // Mine prompt (shown when underground and idle)
+    this.minePrompt = this.add.text(0, 0, 'Удержи E для добычи', {
       fontFamily: 'monospace',
       fontSize: '16px',
       color: '#ffd97d',
-      backgroundColor: '#000000cc',
-      padding: { x: 10, y: 6 }
-    });
-    this.miningLabel.setOrigin(0.5, 1);
-    this.miningLabel.setDepth(1000);
-    this.miningLabel.setVisible(false);
-
-    // Progress bar background and fill (world-space, follow player)
-    this.miningBarBg   = this.add.rectangle(0, 0, 64, 6, 0x333333).setDepth(1001).setVisible(false);
-    this.miningBarFill = this.add.rectangle(0, 0, 0,  6, 0xffa500).setDepth(1002).setVisible(false).setOrigin(0, 0.5);
-
-    // Mine prompt (shown when underground and not mining)
-    this.minePrompt = this.add.text(0, 0, 'E — добыть руду', {
-      fontFamily: 'monospace',
-      fontSize: '16px',
-      color: '#ffffff',
       backgroundColor: '#000000cc',
       padding: { x: 10, y: 6 }
     });
@@ -492,26 +475,146 @@ export default class GameScene extends Phaser.Scene {
     });
   }
 
-  handlePlantCollection() {
-    const nearbyPlant = this.getNearbyPlant();
-
-    if (!nearbyPlant) {
+  handlePlantCollection(delta) {
+    // ── Result flash: show feedback briefly after release ──
+    if (this.harvestState === 'result') {
+      this.harvestResultTimer -= delta;
+      this.harvestFeedbackText.setPosition(this.player.x, this.player.y - 72);
+      if (this.harvestResultTimer <= 0) {
+        this.harvestState = 'idle';
+        this.harvestGfx.clear();
+        this.harvestFeedbackText.setVisible(false);
+      }
       return;
     }
 
-    if (Phaser.Input.Keyboard.JustDown(this.collectKey)) {
-      nearbyPlant.collected = true;
-      for (let y = PLANT_PATCH.startY; y <= PLANT_PATCH.endY; y += 1) {
-        for (let x = nearbyPlant.startX; x <= nearbyPlant.endX; x += 1) {
-          this.growLayer.removeTileAt(x, y);
+    const nearbyPlant = this.getNearbyPlant();
+
+    if (!nearbyPlant) {
+      if (this.harvestState !== 'idle') {
+        this.harvestState = 'idle';
+        this.harvestGfx.clear();
+      }
+      return;
+    }
+
+    // ── Idle: waiting for E press ──
+    if (this.harvestState === 'idle') {
+      if (Phaser.Input.Keyboard.JustDown(this.collectKey)) {
+        this.harvestState = 'spinning';
+        this.harvestMode  = 'plant';
+        this.harvestAngle = -Math.PI / 2; // start at top (12 o'clock)
+        this.harvestTarget = nearbyPlant;
+      }
+      return;
+    }
+
+    // ── Spinning: needle sweeps, release E to stop ──
+    if (this.harvestState === 'spinning') {
+      this.harvestAngle += this.harvestSpeed * (delta / 1000);
+      this.drawHarvestGauge(this.player.x, this.player.y - 52);
+
+      if (Phaser.Input.Keyboard.JustUp(this.collectKey)) {
+        this.finishHarvest(nearbyPlant);
+      }
+    }
+  }
+
+  // ── Draw the circular harvest gauge above the player ──
+  drawHarvestGauge(px, py) {
+    const R     = 24;
+    const r     = 15;
+    const ringR = (R + r) / 2;
+    const ringW = R - r + 1;
+
+    const top     = -Math.PI / 2;
+    const PERFECT = Math.PI / 6;    // ±30° from 12 o'clock
+    const GOOD    = Math.PI / 2.2;  // ±82° from 12 o'clock
+
+    this.harvestGfx.clear();
+
+    // Dark background disk
+    this.harvestGfx.fillStyle(0x000000, 0.78);
+    this.harvestGfx.fillCircle(px, py, R + 4);
+
+    // Red zone (full ring as base)
+    this.harvestGfx.lineStyle(ringW, 0xcc2222, 0.88);
+    this.harvestGfx.beginPath();
+    this.harvestGfx.arc(px, py, ringR, 0, Math.PI * 2);
+    this.harvestGfx.strokePath();
+
+    // Yellow zone (good) — two arcs flanking the green
+    this.harvestGfx.lineStyle(ringW, 0xffcc00, 0.92);
+    this.harvestGfx.beginPath();
+    this.harvestGfx.arc(px, py, ringR, top + PERFECT, top + GOOD);
+    this.harvestGfx.strokePath();
+    this.harvestGfx.beginPath();
+    this.harvestGfx.arc(px, py, ringR, top - GOOD, top - PERFECT);
+    this.harvestGfx.strokePath();
+
+    // Green zone (perfect) — small arc at 12 o'clock
+    this.harvestGfx.lineStyle(ringW, 0x33ee77, 0.95);
+    this.harvestGfx.beginPath();
+    this.harvestGfx.arc(px, py, ringR, top - PERFECT, top + PERFECT);
+    this.harvestGfx.strokePath();
+
+    // Needle
+    const nx = px + Math.cos(this.harvestAngle) * (R + 3);
+    const ny = py + Math.sin(this.harvestAngle) * (R + 3);
+    this.harvestGfx.lineStyle(2.5, 0xffffff, 1);
+    this.harvestGfx.beginPath();
+    this.harvestGfx.moveTo(px, py);
+    this.harvestGfx.lineTo(nx, ny);
+    this.harvestGfx.strokePath();
+
+    // Needle tip
+    this.harvestGfx.fillStyle(0xffffff, 1);
+    this.harvestGfx.fillCircle(nx, ny, 2.5);
+
+    // Center dot
+    this.harvestGfx.fillStyle(0xffffff, 0.8);
+    this.harvestGfx.fillCircle(px, py, 2.5);
+  }
+
+  // ── Evaluate result when E is released ──
+  finishHarvest(plant) {
+    const norm = ((this.harvestAngle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+    const top  = Math.PI * 1.5; // 270° = 12 o'clock normalized
+    let dist   = Math.abs(norm - top);
+    if (dist > Math.PI) dist = Math.PI * 2 - dist;
+
+    const PERFECT = Math.PI / 6;
+    const GOOD    = Math.PI / 2.2;
+
+    let reward, msg, col;
+    if (dist <= PERFECT) {
+      reward = 2; msg = '✓ Отлично!  +2'; col = '#44ff88';
+    } else if (dist <= GOOD) {
+      reward = 1; msg = '✓ Хорошо!  +1';  col = '#ffcc00';
+    } else {
+      reward = 0; msg = '✗ Промах!';       col = '#ff5555';
+    }
+
+    if (reward > 0) {
+      plant.collected = true;
+      for (let ty = PLANT_PATCH.startY; ty <= PLANT_PATCH.endY; ty += 1) {
+        for (let tx = plant.startX; tx <= plant.endX; tx += 1) {
+          this.growLayer.removeTileAt(tx, ty);
         }
       }
-      this.collectedPlants += 1;
+      this.collectedPlants += reward;
       this.updatePlantsCounter();
-      nearbyPlant.respawnEvent = this.time.delayedCall(PLANT_PATCH.respawnDelayMs, () => {
-        this.respawnPlant(nearbyPlant);
+      plant.respawnEvent = this.time.delayedCall(PLANT_PATCH.respawnDelayMs, () => {
+        this.respawnPlant(plant);
       });
     }
+
+    this.harvestFeedbackText.setText(msg);
+    this.harvestFeedbackText.setColor(col);
+    this.harvestFeedbackText.setPosition(this.player.x, this.player.y - 72);
+    this.harvestFeedbackText.setVisible(true);
+    this.harvestState       = 'result';
+    this.harvestResultTimer = 900;
   }
 
   updatePlantsCounter() {
@@ -524,63 +627,79 @@ export default class GameScene extends Phaser.Scene {
     const px = this.player.x;
     const py = this.player.y - 44;
 
-    if (this.isMining) {
-      this.miningElapsed += delta;
-      const progress  = Math.min(this.miningElapsed / this.miningDuration, 1);
-      const remaining = Math.ceil((this.miningDuration - this.miningElapsed) / 1000);
-
-      // Update label
-      this.miningLabel.setText(`Добыча руды... ${remaining}с`);
-      this.miningLabel.setPosition(px, py);
-      this.miningLabel.setVisible(true);
-
-      // Update progress bar
-      const barW = 64;
-      this.miningBarBg.setPosition(px, py + 6);
-      this.miningBarBg.setVisible(true);
-      this.miningBarFill.setPosition(px - barW / 2, py + 6);
-      this.miningBarFill.setSize(barW * progress, 6);
-      this.miningBarFill.setVisible(true);
-
-      // Hide mine prompt during mining
+    // ── Result flash ──
+    if (this.harvestState === 'result') {
+      this.harvestResultTimer -= delta;
+      this.harvestFeedbackText.setPosition(px, py - 28);
+      if (this.harvestResultTimer <= 0) {
+        this.harvestState = 'idle';
+        this.harvestGfx.clear();
+        this.harvestFeedbackText.setVisible(false);
+      }
       this.minePrompt.setVisible(false);
+      return;
+    }
 
-      // Cancel by pressing E again
-      if (Phaser.Input.Keyboard.JustDown(this.collectKey)) {
-        this.cancelMining();
-        return;
-      }
-
-      // Done
-      if (this.miningElapsed >= this.miningDuration) {
-        this.isMining = false;
-        this.miningElapsed = 0;
-        this.collectedOre += 1;
-        this.updateOreCounter();
-        this.miningLabel.setVisible(false);
-        this.miningBarBg.setVisible(false);
-        this.miningBarFill.setVisible(false);
-      }
-
-    } else {
-      // Show "E — добыть руду" prompt
+    // ── Idle: show prompt, wait for E press ──
+    if (this.harvestState === 'idle') {
       this.minePrompt.setPosition(px, py);
       this.minePrompt.setVisible(true);
-
-      // Start mining
       if (Phaser.Input.Keyboard.JustDown(this.collectKey)) {
-        this.isMining      = true;
-        this.miningElapsed = 0;
+        this.harvestState = 'spinning';
+        this.harvestMode  = 'ore';
+        this.harvestAngle = -Math.PI / 2;
+        this.minePrompt.setVisible(false);
+      }
+      return;
+    }
+
+    // ── Spinning: needle sweeps, release E to strike ──
+    if (this.harvestState === 'spinning') {
+      this.minePrompt.setVisible(false);
+      this.harvestAngle += this.harvestSpeed * (delta / 1000);
+      this.drawHarvestGauge(px, py - 8);
+
+      if (Phaser.Input.Keyboard.JustUp(this.collectKey)) {
+        this.finishMining();
       }
     }
   }
 
+  finishMining() {
+    const norm = ((this.harvestAngle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+    const top  = Math.PI * 1.5;
+    let dist   = Math.abs(norm - top);
+    if (dist > Math.PI) dist = Math.PI * 2 - dist;
+
+    const PERFECT = Math.PI / 6;
+    const GOOD    = Math.PI / 2.2;
+
+    let reward, msg, col;
+    if (dist <= PERFECT) {
+      reward = 2; msg = '✓ Отлично!  +2 руды'; col = '#44ff88';
+    } else if (dist <= GOOD) {
+      reward = 1; msg = '✓ Хорошо!  +1 руда';  col = '#ffcc00';
+    } else {
+      reward = 0; msg = '✗ Промах!';             col = '#ff5555';
+    }
+
+    if (reward > 0) {
+      this.collectedOre += reward;
+      this.updateOreCounter();
+    }
+
+    this.harvestFeedbackText.setText(msg);
+    this.harvestFeedbackText.setColor(col);
+    this.harvestFeedbackText.setPosition(this.player.x, this.player.y - 72);
+    this.harvestFeedbackText.setVisible(true);
+    this.harvestState       = 'result';
+    this.harvestResultTimer = 900;
+  }
+
   cancelMining() {
-    this.isMining      = false;
-    this.miningElapsed = 0;
-    this.miningLabel.setVisible(false);
-    this.miningBarBg.setVisible(false);
-    this.miningBarFill.setVisible(false);
+    this.harvestState = 'idle';
+    this.harvestGfx.clear();
+    this.harvestFeedbackText.setVisible(false);
   }
 
   // ── Satiety ──────────────────────────────────────
@@ -600,7 +719,7 @@ export default class GameScene extends Phaser.Scene {
     this.tradeResetTimer -= delta;
     if (this.tradeResetTimer <= 0) {
       this.tradeResetTimer = 180000;
-      this.tradeCounts = { food: 0, water: 0 };
+      this.tradeCounts = { food: 0, water: 0, bm_plants_ore: 0, bm_ore_food: 0, bm_food_water: 0, bm_water_plants: 0 };
     }
   }
 
@@ -729,6 +848,33 @@ export default class GameScene extends Phaser.Scene {
     this.scene.pause();
   }
 
+  // ════════════════════════════════════════════════
+  //  HARVEST GAUGE  (plant mini-game)
+  // ════════════════════════════════════════════════
+
+  createHarvestGauge() {
+    this.harvestGfx = this.add.graphics();
+    this.harvestGfx.setDepth(3000);
+
+    this.harvestFeedbackText = this.add.text(0, 0, '', {
+      fontFamily: 'monospace',
+      fontSize: '14px',
+      color: '#ffffff',
+      stroke: '#000000',
+      strokeThickness: 3,
+    });
+    this.harvestFeedbackText.setOrigin(0.5, 1);
+    this.harvestFeedbackText.setDepth(3001);
+    this.harvestFeedbackText.setVisible(false);
+
+    this.harvestState       = 'idle';   // 'idle' | 'spinning' | 'result'
+    this.harvestMode        = 'none';   // 'plant' | 'ore'
+    this.harvestAngle       = -Math.PI / 2;
+    this.harvestSpeed       = Math.PI * 1.8; // radians / second
+    this.harvestTarget      = null;
+    this.harvestResultTimer = 0;
+  }
+
   respawnPlant(plant) {
     for (let rowIndex = 0; rowIndex < plant.tiles.length; rowIndex += 1) {
       for (let columnIndex = 0; columnIndex < plant.tiles[rowIndex].length; columnIndex += 1) {
@@ -751,10 +897,12 @@ export default class GameScene extends Phaser.Scene {
   updateInteractionText() {
     const nearbyPlant = this.getNearbyPlant();
 
-    if (nearbyPlant) {
+    // Show prompt only in idle state; gauge replaces it while spinning
+    if (nearbyPlant && this.harvestState === 'idle') {
+      this.plantPrompt.setText('Удержи E для сбора');
       this.plantPrompt.setPosition(nearbyPlant.x, nearbyPlant.y - 40);
       this.plantPrompt.setVisible(true);
-    } else {
+    } else if (this.harvestState !== 'result') {
       this.plantPrompt.setVisible(false);
     }
 
