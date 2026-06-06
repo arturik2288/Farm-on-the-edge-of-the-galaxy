@@ -70,7 +70,7 @@ export default class MenuScene extends Phaser.Scene {
     });
 
     // Hint
-    this.add.text(width / 2, height * 0.82, '← → ходить  |  Space прыгать  |  E собрать  |  ↑↓ лестница', {
+    this.add.text(width / 2, height * 0.82, '← → ходить  |  Space прыгать  |  E добыть  |  ↑↓ лестница  |  T терминал', {
       fontFamily: 'monospace',
       fontSize: '15px',
       color: '#888888',

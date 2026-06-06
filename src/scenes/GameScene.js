@@ -13,12 +13,6 @@ const SHAFT_OPENING = {
   startY: 18,
   endY: 35
 };
-const CAVE_OPEN_AREA = {
-  startX: 4,
-  endX: 62,
-  startY: 23,
-  endY: 38
-};
 const PLANT_PATCH = {
   plants: [
     { startX: 26, endX: 27 },
@@ -219,28 +213,6 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
-  clearPassageCollision(layer) {
-    for (let y = SHAFT_OPENING.startY; y <= SHAFT_OPENING.endY; y += 1) {
-      for (let x = SHAFT_OPENING.startX; x <= SHAFT_OPENING.endX; x += 1) {
-        const tile = layer.getTileAt(x, y);
-
-        if (tile) {
-          tile.setCollision(false, false, false, false);
-        }
-      }
-    }
-
-    for (let y = CAVE_OPEN_AREA.startY; y <= CAVE_OPEN_AREA.endY; y += 1) {
-      for (let x = CAVE_OPEN_AREA.startX; x <= CAVE_OPEN_AREA.endX; x += 1) {
-        const tile = layer.getTileAt(x, y);
-
-        if (tile) {
-          tile.setCollision(false, false, false, false);
-        }
-      }
-    }
-  }
-
   createSetPieces() {
     const sortedObjects = [...this.mapData.objects].sort((a, b) => a.x - b.x);
     const houseObject = sortedObjects[0] ?? { x: 80, y: 420, width: 220, height: 220 };
@@ -269,7 +241,6 @@ export default class GameScene extends Phaser.Scene {
     this.player = this.physics.add.sprite(PLAYER_SPAWN.x, PLAYER_SPAWN.y, 'player');
     this.player.setDepth(30);
     this.player.setCollideWorldBounds(true);
-    this.player.setScale(1);
     this.player.isClimbing = false;
 
     const body = this.player.body;
@@ -329,17 +300,7 @@ export default class GameScene extends Phaser.Scene {
     this.hintText.setScrollFactor(0);
     this.hintText.setDepth(5001);
 
-    this.zoneText = this.add.text(24, 56, '', {
-      fontFamily: 'monospace',
-      fontSize: '18px',
-      color: '#fff4b0',
-      backgroundColor: '#00000099',
-      padding: { x: 10, y: 6 }
-    });
-    this.zoneText.setScrollFactor(0);
-    this.zoneText.setDepth(5001);
-
-    this.plantPrompt = this.add.text(0, 0, 'Нажмите E, чтобы собрать растение', {
+    this.plantPrompt = this.add.text(0, 0, '', {
       fontFamily: 'monospace',
       fontSize: '16px',
       color: '#ffffff',
@@ -906,6 +867,5 @@ export default class GameScene extends Phaser.Scene {
       this.plantPrompt.setVisible(false);
     }
 
-    this.zoneText.setText('');
   }
 }
