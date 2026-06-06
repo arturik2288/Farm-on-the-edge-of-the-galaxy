@@ -119,76 +119,6 @@ npm run build
     └── im.tsx
 ```
 
----
-
-### Архитектура (C4)
-
-#### Уровень 1 — Контекст системы
-
-```mermaid
-C4Context
-    title Контекст системы — Farm on the Edge of the Galaxy
-
-    Person(user, "Игрок", "Открывает игру в браузере")
-    Person(dev, "Разработчик", "Пишет код, пушит на GitHub")
-
-    System(game, "Farm on the Edge of the Galaxy", "Браузерная 2D-игра на Phaser 3")
-
-    System_Ext(github, "GitHub", "Хранение кода и история коммитов")
-    System_Ext(vercel, "Vercel", "Автоматическая сборка и хостинг")
-
-    Rel(user, game, "Играет", "HTTPS / браузер")
-    Rel(dev, github, "git push")
-    Rel(github, vercel, "Webhook — триггер деплоя")
-    Rel(vercel, game, "Публикует собранный сайт")
-```
-
-#### Уровень 2 — Контейнеры
-
-```mermaid
-C4Container
-    title Контейнеры — Farm on the Edge of the Galaxy
-
-    Person(user, "Игрок")
-
-    Container_Boundary(browser, "Браузер пользователя") {
-        Container(landing, "Лендинг", "HTML/CSS/JS", "Главная страница, гайд, анимация звёзд")
-        Container(phaser, "Phaser 3 Canvas", "JavaScript", "Игровой движок: сцены, физика, рендеринг")
-    }
-
-    Container_Boundary(infra, "Инфраструктура") {
-        Container(vite, "Vite", "Node.js", "Сборка: бандлинг JS, копирование assets")
-        Container(vercel, "Vercel CDN", "Облако", "Раздача статики, HTTPS, CI/CD")
-        Container(github, "GitHub", "Git", "Хранение исходников")
-    }
-
-    Rel(user, landing, "Открывает сайт", "HTTPS")
-    Rel(landing, phaser, "Инициализирует игру", "JS")
-    Rel(github, vite, "Запускает сборку при пуше")
-    Rel(vite, vercel, "Публикует dist/")
-    Rel(vercel, landing, "Отдаёт файлы")
-```
-
-#### Уровень 3 — Компоненты (Phaser)
-
-```mermaid
-C4Component
-    title Компоненты — Phaser приложение
-
-    Container_Boundary(phaser, "Phaser 3 App") {
-        Component(main, "main.js", "Точка входа", "Конфигурирует движок, регистрирует сцены, связывает кнопку меню с DOM")
-        Component(menu, "MenuScene", "Phaser.Scene", "Стартовый экран со звёздами и кнопкой Играть")
-        Component(game, "GameScene", "Phaser.Scene", "Движение игрока, карта, растения, добыча руды, сытость, колесо сбора")
-        Component(trade, "TradeScene", "Phaser.Scene", "Торговый терминал — запускается поверх GameScene")
-        Component(map, "my_map.tmx", "Tiled XML", "Карта мира: тайловые слои, коллизии, объекты дома и ракеты")
-    }
-
-    Rel(main, menu, "Запускает первой")
-    Rel(menu, game, "scene.start() по кнопке")
-    Rel(game, trade, "scene.launch() при нажатии T")
-    Rel(trade, game, "Возвращает ресурсы через onClose()")
-    Rel(game, map, "Импортирует и парсит TMX ?raw")
-```
 
 ---
 
@@ -212,4 +142,3 @@ C4Component
 
 ---
 
-> Проект разработан в учебных целях. Использование генеративного ИИ задокументировано отдельно.
